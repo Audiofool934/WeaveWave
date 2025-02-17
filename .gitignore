@@ -1,0 +1,11 @@
+/repos/
+/course/
+/eval/
+assets/lib/*
+assets/notes/*
+data/*/*
+results/*
+demo/app/run.sh
+__pycache__/
+.DS_Store
+.ipynb_checkpoints/
