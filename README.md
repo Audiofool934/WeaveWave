@@ -1,6 +1,6 @@
 # WeaveWave: Towards Multimodal Music Generation
 
-<div style="text-align: center;">
+<div align="center">
    <img src="assets/logo/WeaveWave.png" alt="DSOTM" width="500px">
 </div>
 <p align="center">
@@ -13,7 +13,7 @@
 
 Artificial Intelligence Generated Content (AIGC), as a new generation content production paradigm, is reshaping the possibilities in the field of artistic creation. This project focuses on the vertical domain of music generation and conducts a systematic exploration of AI music creation under multimodal input conditions. It proposes three potential multimodal music generation model frameworks:
 
-<div style="text-align: center;">
+<div align="center">
    <img src="assets/media/frame-1.png" alt="frame-1" width="500px">
 </div>
 <p align="center">
@@ -22,7 +22,7 @@ Artificial Intelligence Generated Content (AIGC), as a new generation content pr
 
 <br>
 
-<div style="text-align: center;">
+<div align="center">
    <img src="assets/media/frame-2.png" alt="frame-2" width="500px">
 </div>
 <p align="center">
@@ -31,7 +31,7 @@ Artificial Intelligence Generated Content (AIGC), as a new generation content pr
 
 <br>
 
-<div style="text-align: center;">
+<div align="center">
 <img src="assets/media/frame-3.png" alt="frame-3" width="500px">
 </div>
 <p align="center">
@@ -60,8 +60,10 @@ generation -->
 
 ## Demo
 
-<div style="text-align: center;">
-  <video src='assets/media/demo.mp4'></video>
+<div align="center">
+   <a href="assets/media/demo.mp4">
+      <img src="assets/media/demo.png" alt="Demo" width="500px">
+   </a>
 </div>
 <p align="center">
   <i> WeaveWave: Web app built with Gradio </i>
