@@ -7,8 +7,6 @@
    <i> WeaveWave: Towards Multimodal Music Generation </i>
 </p>
 
----
-
 ## Overview
 
 Artificial Intelligence Generated Content (AIGC), as a new generation content production paradigm, is reshaping the possibilities in the field of artistic creation. This project focuses on the vertical domain of music generation and conducts a systematic exploration of AI music creation under multimodal input conditions. It proposes three potential multimodal music generation model frameworks:
