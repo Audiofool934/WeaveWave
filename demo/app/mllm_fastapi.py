@@ -148,6 +148,9 @@ async def describe_image(request: ImageRequest):
             tokenizer=MLLM_TOKENIZER,
         )
         del image, msgs
+        
+        logging.info(f"Answer: {answer}")
+        
         return {"description": answer.strip()}
 
     except Exception as e:
@@ -169,6 +172,9 @@ async def describe_video(request: VideoRequest):
         params = {"use_image_id": False, "max_slice_nums": 2}
 
         answer = MLLM.chat(msgs=msgs, tokenizer=MLLM_TOKENIZER, **params)
+        
+        logging.info(f"Answer: {answer}")
+        
         del msgs
         torch.cuda.empty_cache()
         return {"description": answer.strip()}
@@ -188,6 +194,9 @@ async def describe_text(request: TextRequest):
         answer = MLLM.chat(msgs=msgs, tokenizer=MLLM_TOKENIZER)
         del msgs
         torch.cuda.empty_cache()
+        
+        logging.info(f"Answer: {answer}")
+        
         return {"description": answer.strip()}
     except Exception as e:
         logging.exception("Error in /describe_text/")
