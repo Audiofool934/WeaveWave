@@ -101,7 +101,11 @@ In this [demo](assets/media/demo.mp4), we showcase the WeaveWave web app impleme
 ## References
 
 [1]. Copet, J., Kreuk, F., Gat, I., Remez, T., Kant, D., Synnaeve, G., Adi, Y., & Défossez, A. (2024). Simple and controllable music generation. arXiv:2306.05284.
+
 [2] Rouard, S., Adi, Y., Copet, J., Roebel, A., & Défossez, A. (2024). Audio conditioning for music generation via discrete bottleneck features. arXiv:2407.12563.
+
 [3]. Liu, H., Yuan, Y., Liu, X., Mei, X., Kong, Q., Tian, Q., Wang, Y., Wang, W., Wang, Y., & Plumbley, M. D. (2024). AudioLDM 2: Learning holistic audio generation with self-supervised pretraining. arXiv:2308.05734.
+
 [4]. Rinaldi, I., Fanelli, N., Castellano, G., & Vessio, G. (2024). Art2Mus: Bridging visual arts and music through cross-modal generation. arXiv:2410.04906.
+
 [5] MiniCPM-o Team. (2025). MiniCPM-o: A GPT-4.o-level MLLM for vision, speech, and multimodal live streaming on your phone. OpenBMB. [Link](https://openbmb.notion.site/MiniCPM-o-2-6-A-GPT-4o-Level-MLLM-for-Vision-Speech-and-Multimodal-Live-Streaming-on-Your-Phone-185ede1b7a558042b5d5e45e6b237da9)
