@@ -1,0 +1,75 @@
+# @package __global__
+
+# 配置文件用于WeaveWave的MusicGen-Style训练
+defaults:
+  - override /solver: musicgen/musicgen_style_32khz
+  - override /conditioner: style2music
+  - override /dset: audio/default
+  - _self_
+
+# 设置基本参数
+autocast: true
+autocast_dtype: float16
+
+# 使用EnCodec作为音频编码器，32khz采样率
+compression_model_checkpoint: //pretrained/facebook/encodec_32khz
+
+channels: 1
+sample_rate: 32000
+
+# 启用死锁检测
+deadlock:
+  use: true
+
+# 数据集配置
+dataset:
+  batch_size: 8  # 根据GPU内存调整
+  sample_on_weight: false
+  sample_on_duration: false
+  # 自定义数据集路径
+  train:
+    paths: ["data/multimodal_music_dataset/train"]
+    merge_text_p: 0.25
+    drop_desc_p: 0.5
+    drop_other_p: 0.5
+  valid:
+    paths: ["data/multimodal_music_dataset/valid"]
+  evaluate:
+    paths: ["data/multimodal_music_dataset/test"]
+  shuffle: true
+
+# 生成配置
+generate:
+  lm:
+    use_sampling: true
+    top_k: 250
+    top_p: 0.0
+    cfg_coef: 3.0
+    cfg_coef_beta: 5.0
+
+# 优化器配置
+optim:
+  epochs: 100
+  optimizer: adamw
+  lr: 1e-4
+  ema:
+    use: true
+    updates: 10
+    device: cuda
+
+# 日志配置
+logging:
+  log_tensorboard: true
+  
+# 学习率调度
+schedule:
+  lr_scheduler: cosine
+  cosine:
+    warmup: 2000
+    lr_min_ratio: 0.0
+    cycle_length: 1.0
+
+# 模型规模配置
+model:
+  lm:
+    model_scale: small  # 可选: small, medium, large 
