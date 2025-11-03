@@ -10,13 +10,13 @@ from PIL import Image
 from decord import VideoReader, cpu
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
-from transformers import AutoModel, AutoTokenizer
+from transformers import Gemma3ForConditionalGeneration, AutoProcessor
 import base64
 from tempfile import NamedTemporaryFile
 
 # --- Configuration ---
-MODEL_NAME = "MiniCPM-o-2_6"
-MODEL_PATH = f"/home/chuangyan/WeaveWave/models/{MODEL_NAME}"
+MODEL_NAME = "google/gemma-3-12b-it"
+MODEL_PATH = f"{MODEL_NAME}"
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 MAX_NUM_FRAMES = 32  # Adjust as needed.
@@ -28,7 +28,7 @@ logging.basicConfig(
 
 # --- Load Model ---
 MLLM = None
-MLLM_TOKENIZER = None
+MLLM_PROCESSOR = None
 
 SYSTEM_PROMPT_TXT = "You are a music composer who generates short, concise description of music inspired by text input. When provided with user's text prompt, interpret text's elements and translate them into musical terms. Tailor descriptions to capture the tone, rhythm, genre, and instruments most suited to the atmosphere. Be imaginative yet relatable, offering unique musical ideas grounded in the essence of the text prompt. The description should be in one or two sentences, providing a clear and vivid image of the music that the picture evokes. The description should focus on the music, no need to mention the visual content."
 SYSTEM_PROMPT_IMG = "You are a music composer who generates short, concise description of music inspired by visual input. When provided with a image and text prompt, interpret videos' elements such as colors, mood, and content—and translate them into musical terms. Tailor descriptions to capture the tone, rhythm, genre, and instruments most suited to the image's atmosphere. Be imaginative yet relatable, offering unique musical ideas grounded in the essence of the visual stimulus and the text prompt. The description should be in one or two sentences, providing a clear and vivid image of the music that the picture evokes. The description should focus on the music, no need to mention the visual content."
@@ -36,27 +36,19 @@ SYSTEM_PROMPT_VID = "You are a music composer who generates short, concise descr
 
 
 def load_mllm():
-    """Loads the MiniCPM model and tokenizer."""
-    global MLLM, MLLM_TOKENIZER
+    """Loads the Gemma3 model and processor."""
+    global MLLM, MLLM_PROCESSOR
     logging.info(f"Loading MLLM: {MODEL_NAME}")
     try:
-        MLLM = (
-            AutoModel.from_pretrained(
-                MODEL_PATH,
-                trust_remote_code=True,
-                attn_implementation="sdpa",  # Or 'flash_attention_2'.
-                torch_dtype=torch.bfloat16,
-                init_vision=True,
-                init_audio=True,
-                init_tts=True,
-            )
-            .eval()
-            .to(DEVICE)
-        )
-        MLLM_TOKENIZER = AutoTokenizer.from_pretrained(
-            MODEL_PATH, trust_remote_code=True
-        )
-        MLLM.init_tts()  # Init tts model.
+        MLLM = Gemma3ForConditionalGeneration.from_pretrained(
+            MODEL_PATH,
+            device_map="auto",
+            torch_dtype=torch.bfloat16,
+        ).eval()
+        
+        MLLM_PROCESSOR = AutoProcessor.from_pretrained(MODEL_PATH)
+        
+        logging.info("Model and processor loaded successfully")
     except Exception as e:
         logging.exception("Failed to load MLLM")
         raise  # Re-raise to have it handled at a higher level.
@@ -112,10 +104,16 @@ class TextRequest(BaseModel):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     try:
+        logging.info("Starting MLLM server, loading model...")
         load_mllm()
+        logging.info("MLLM model loaded successfully, server ready")
         yield
+    except Exception as e:
+        logging.exception("Failed to start MLLM server")
+        raise
     finally:
         # 清理显存
+        logging.info("Shutting down MLLM server...")
         global MLLM
         if MLLM is not None:
             MLLM.to("cpu")
@@ -130,24 +128,59 @@ app = FastAPI(lifespan=lifespan)
 # --- API Endpoints ---
 
 
+@app.get("/health")
+async def health_check():
+    """Health check endpoint to verify server is ready."""
+    global MLLM, MLLM_PROCESSOR
+    if MLLM is None or MLLM_PROCESSOR is None:
+        raise HTTPException(status_code=503, detail="Model not loaded yet")
+    return {"status": "ok", "model": MODEL_NAME}
+
+
 @app.post("/describe_image/")
 async def describe_image(request: ImageRequest):
-    global MLLM, MLLM_TOKENIZER
+    global MLLM, MLLM_PROCESSOR
+    image = None
+    messages = None
+    inputs = None
+    generation = None
+    
     try:
         image_data = base64.b64decode(request.image)
         image = Image.open(io.BytesIO(image_data)).convert("RGB")
-        print(type(image))
-        msgs = [
-            {"role": "system", "content": SYSTEM_PROMPT_IMG},
-            {"role": "user", "content": [image, request.user_prompt]},
+        
+        # Prepare messages in Gemma3 format
+        messages = [
+            {
+                "role": "system",
+                "content": [{"type": "text", "text": SYSTEM_PROMPT_IMG}]
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image", "image": image},
+                    {"type": "text", "text": request.user_prompt}
+                ]
+            }
         ]
-        # params = {"use_image_id": False, "max_slice_nums": 2}
-        print(type(MLLM))
-        answer = MLLM.chat(
-            msgs=msgs,
-            tokenizer=MLLM_TOKENIZER,
-        )
-        del image, msgs
+        
+        # Apply chat template and tokenize
+        inputs = MLLM_PROCESSOR.apply_chat_template(
+            messages,
+            add_generation_prompt=True,
+            tokenize=True,
+            return_dict=True,
+            return_tensors="pt"
+        ).to(MLLM.device, dtype=torch.bfloat16)
+        
+        input_len = inputs["input_ids"].shape[-1]
+        
+        # Generate response
+        with torch.inference_mode():
+            generation = MLLM.generate(**inputs, max_new_tokens=200, do_sample=False)
+            generation = generation[0][input_len:]
+        
+        answer = MLLM_PROCESSOR.decode(generation, skip_special_tokens=True)
         
         logging.info(f"Answer: {answer}")
         
@@ -156,44 +189,129 @@ async def describe_image(request: ImageRequest):
     except Exception as e:
         logging.exception("Error in /describe_image/")
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        # Always clean up resources
+        if image is not None:
+            del image
+        if messages is not None:
+            del messages
+        if inputs is not None:
+            del inputs
+        if generation is not None:
+            del generation
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
 
 @app.post("/describe_video/")
 async def describe_video(request: VideoRequest):
-    global MLLM, MLLM_TOKENIZER
+    global MLLM, MLLM_PROCESSOR
+    frames = None
+    representative_image = None
+    messages = None
+    inputs = None
+    generation = None
+    
     try:
         video_data = base64.b64decode(request.video)
         frames = encode_video(video_data)
-
-        msgs = [
-            {"role": "system", "content": SYSTEM_PROMPT_VID},
-            {"role": "user", "content": frames + [request.user_prompt]},
+        
+        # Use first frame as representative image (Gemma3 doesn't support multi-frame video)
+        # For better results, could use middle frame or average multiple frames
+        representative_image = frames[len(frames) // 2] if frames else frames[0]
+        
+        # Prepare messages in Gemma3 format
+        messages = [
+            {
+                "role": "system",
+                "content": [{"type": "text", "text": SYSTEM_PROMPT_VID}]
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image", "image": representative_image},
+                    {"type": "text", "text": request.user_prompt}
+                ]
+            }
         ]
-        params = {"use_image_id": False, "max_slice_nums": 2}
-
-        answer = MLLM.chat(msgs=msgs, tokenizer=MLLM_TOKENIZER, **params)
+        
+        # Apply chat template and tokenize
+        inputs = MLLM_PROCESSOR.apply_chat_template(
+            messages,
+            add_generation_prompt=True,
+            tokenize=True,
+            return_dict=True,
+            return_tensors="pt"
+        ).to(MLLM.device, dtype=torch.bfloat16)
+        
+        input_len = inputs["input_ids"].shape[-1]
+        
+        # Generate response
+        with torch.inference_mode():
+            generation = MLLM.generate(**inputs, max_new_tokens=200, do_sample=False)
+            generation = generation[0][input_len:]
+        
+        answer = MLLM_PROCESSOR.decode(generation, skip_special_tokens=True)
         
         logging.info(f"Answer: {answer}")
         
-        del msgs
-        torch.cuda.empty_cache()
         return {"description": answer.strip()}
     except Exception as e:
         logging.exception("Error in /describe_video/")
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        # Always clean up resources
+        if frames is not None:
+            del frames
+        if representative_image is not None:
+            del representative_image
+        if messages is not None:
+            del messages
+        if inputs is not None:
+            del inputs
+        if generation is not None:
+            del generation
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
 
 @app.post("/describe_text/")
 async def describe_text(request: TextRequest):
-    global MLLM, MLLM_TOKENIZER
+    global MLLM, MLLM_PROCESSOR
+    messages = None
+    inputs = None
+    generation = None
+    
     try:
-        msgs = [
-            {"role": "system", "content": SYSTEM_PROMPT_TXT},
-            {"role": "user", "content": request.user_prompt},
+        # Prepare messages in Gemma3 format (text-only)
+        messages = [
+            {
+                "role": "system",
+                "content": [{"type": "text", "text": SYSTEM_PROMPT_TXT}]
+            },
+            {
+                "role": "user",
+                "content": [{"type": "text", "text": request.user_prompt}]
+            }
         ]
-        answer = MLLM.chat(msgs=msgs, tokenizer=MLLM_TOKENIZER)
-        del msgs
-        torch.cuda.empty_cache()
+        
+        # Apply chat template and tokenize
+        inputs = MLLM_PROCESSOR.apply_chat_template(
+            messages,
+            add_generation_prompt=True,
+            tokenize=True,
+            return_dict=True,
+            return_tensors="pt"
+        ).to(MLLM.device, dtype=torch.bfloat16)
+        
+        input_len = inputs["input_ids"].shape[-1]
+        
+        # Generate response
+        with torch.inference_mode():
+            generation = MLLM.generate(**inputs, max_new_tokens=200, do_sample=False)
+            generation = generation[0][input_len:]
+        
+        answer = MLLM_PROCESSOR.decode(generation, skip_special_tokens=True)
         
         logging.info(f"Answer: {answer}")
         
@@ -201,6 +319,16 @@ async def describe_text(request: TextRequest):
     except Exception as e:
         logging.exception("Error in /describe_text/")
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        # Always clean up resources
+        if messages is not None:
+            del messages
+        if inputs is not None:
+            del inputs
+        if generation is not None:
+            del generation
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
 
 # --- Run with Uvicorn ---
@@ -209,4 +337,4 @@ if __name__ == "__main__":
     # load_mllm()
     import uvicorn
 
-    uvicorn.run("mllm_api_server:app", host="0.0.0.0", port=8000)
+    uvicorn.run("mllm_fastapi:app", host="0.0.0.0", port=8001)

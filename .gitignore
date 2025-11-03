@@ -9,3 +9,5 @@ demo/app/run.sh
 __pycache__/
 .DS_Store
 .ipynb_checkpoints/
+models/t2m/diffrhythm/
+.vscode/

@@ -5,36 +5,30 @@ import sys
 import time
 import typing as tp
 import warnings
-import base64
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
-from einops import rearrange
-import torch
 import gradio as gr
-import requests
+import torch
 
-from audiocraft.data.audio_utils import convert_audio
 from audiocraft.data.audio import audio_write
-from audiocraft.models.encodec import InterleaveStereoCompressionModel
-from audiocraft.models import MusicGen, MultiBandDiffusion
 
-from theme_wave import theme, css
-
-# --- Configuration (Main App) ---
-MLLM_API_URL = (
-    "http://localhost:8000"  #  REPLACE with the actual URL of your MLLM API server.
+from core import (
+    AppConfig,
+    MLLMClient,
+    MLLMClientError,
+    MusicGenerationError,
+    MusicGenerator,
 )
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+from theme_wave import css, theme
 
-# --- Global Variables (Main App) ---
-MODEL = None
-MBD = None
+# --- Global State ---
 INTERRUPTING = False
-USE_DIFFUSION = False  # Keep this for now, even if unused, for easier switching
+app_config = AppConfig()
+mlmm_client = MLLMClient(app_config)
+music_generator = MusicGenerator()
 
 
-# --- Utility Functions (Main App) ---
 def interrupt():
     global INTERRUPTING
     INTERRUPTING = True
@@ -56,8 +50,8 @@ class FileCleaner:
                 if path.exists():
                     try:
                         path.unlink()
-                    except Exception as e:
-                        print(f"Error deleting file {path}: {e}")
+                    except Exception as exc:
+                        print(f"Error deleting file {path}: {exc}")
                 self.files.pop(0)
             else:
                 break
@@ -72,66 +66,33 @@ def make_waveform(*args, **kwargs):
         return gr.make_waveform(*args, **kwargs)
 
 
-# --- Model Loading (Main App) ---
+def _select_media_path(media_type: str, image_path: str, video_path: str) -> tp.Optional[str]:
+    if media_type == "Image":
+        return image_path or None
+    if media_type == "Video":
+        return video_path or None
+    return None
 
 
-def load_musicgen_model(version="facebook/musicgen-stereo-melody-large"):
-    global MODEL
-    print(f"Loading MusicGen model: {version}")
-    if MODEL is None or MODEL.name != version:
-        if MODEL is not None:
-            del MODEL
-        torch.cuda.empty_cache()
-        MODEL = MusicGen.get_pretrained(version, device=DEVICE)
+def _save_audio_batch(audio_batch) -> tp.List[str]:
+    paths: tp.List[str] = []
+    if audio_batch.numel() == 0:
+        raise gr.Error("Music generation returned an empty result.")
 
-
-def load_diffusion_model():
-    global MBD
-    if MBD is None:
-        print("Loading diffusion model")
-        MBD = MultiBandDiffusion.get_mbd_musicgen(device=DEVICE)
-
-
-# --- API Client Functions ---
-
-
-def get_mllm_description(media_path: str, user_prompt: str) -> str:
-    """Gets the music description from the MLLM API."""
-
-    try:
-        if media_path.lower().endswith((".mp4", ".avi", ".mov", ".mkv")):
-            # Video
-            with open(media_path, "rb") as f:
-                video_data = f.read()
-            encoded_video = base64.b64encode(video_data).decode("utf-8")
-            response = requests.post(
-                f"{MLLM_API_URL}/describe_video/",
-                json={"video": encoded_video, "user_prompt": user_prompt},
+    for idx, audio in enumerate(audio_batch):
+        with NamedTemporaryFile("wb", suffix=".wav", delete=False) as file:
+            audio_write(
+                file.name,
+                audio,
+                music_generator.sample_rate,
+                strategy="loudness",
+                loudness_headroom_db=16,
+                loudness_compressor=True,
+                add_suffix=False,
             )
-        elif media_path.lower().endswith((".png", ".jpg", ".jpeg", ".gif", ".bmp")):
-            # Image
-            with open(media_path, "rb") as f:
-                image_data = f.read()
-            encoded_image = base64.b64encode(image_data).decode("utf-8")
-            response = requests.post(
-                f"{MLLM_API_URL}/describe_image/",
-                json={"image": encoded_image, "user_prompt": user_prompt},
-            )
-        else:  # Text-only
-            response = requests.post(
-                f"{MLLM_API_URL}/describe_text/", json={"user_prompt": user_prompt}
-            )
-
-        response.raise_for_status()  # Raise an exception for bad status codes (4xx or 5xx).
-        return response.json()["description"]
-
-    except requests.exceptions.RequestException as e:
-        raise gr.Error(f"Error communicating with MLLM API: {e}")
-    except Exception as e:
-        raise gr.Error(f"An unexpected error occurred: {e}")
-
-
-# --- Music Generation ---
+            paths.append(file.name)
+            file_cleaner.add(file.name)
+    return paths
 
 
 def predict_full(
@@ -149,135 +110,73 @@ def predict_full(
     decoder,
     progress=gr.Progress(),
 ):
-    global INTERRUPTING, USE_DIFFUSION
+    global INTERRUPTING
     INTERRUPTING = False
-    USE_DIFFUSION = decoder == "MultiBand_Diffusion"
+    use_diffusion = decoder == app_config.diffusion_decoder_label
 
-    if media_type == "Image":
-        media = image_input if image_input else None
-    elif media_type == "Video":
-        media = video_input if video_input else None
-    else:
-        media = None
+    media_path = _select_media_path(media_type, image_input, video_input)
 
-    # 1. Get Music Description (using the API client).
+    # 1. Prepare description.
     progress(progress=None, desc="Generating music description...")
-    if media:
-        try:
-            music_description = get_mllm_description(media, text_prompt)
-        except Exception as e:
-            raise gr.Error(str(e))  # Re-raise for Gradio to handle.
-    else:
-        music_description = text_prompt
-
-    # 2. Load MusicGen Model (locally).
-    progress(progress=None, desc="Loading MusicGen model...")
-    load_musicgen_model(model_version)
-
-    # 3. Set Generation Parameters (locally).
-    MODEL.set_generation_params(
-        duration=duration,
-        top_k=topk,
-        top_p=topp,
-        temperature=temperature,
-        cfg_coef=cfg_coef,
-    )
-
-    # 4. Melody Preprocessing (locally).
-    progress(progress=None, desc="Processing melody...")
-    melody_tensor = None  # Use a different variable name
-    if melody:
-        try:
-            sr, melody_tensor = (
-                melody[0],
-                torch.from_numpy(melody[1]).to(MODEL.device).float().t(),
-            )
-            if melody_tensor.dim() == 1:
-                melody_tensor = melody_tensor[None]
-            melody_tensor = melody_tensor[..., : int(sr * duration)]
-            melody_tensor = convert_audio(
-                melody_tensor, sr, MODEL.sample_rate, MODEL.audio_channels
-            )
-
-        except Exception as e:
-            raise gr.Error(f"Error processing melody: {e}")
-
-    # 5. Music Generation (locally).
-    progress(progress=None, desc="Generating music...")
-    if USE_DIFFUSION:
-        load_diffusion_model()
-
+    task_type = media_type if media_path else "text"
+    description = None
+    
     try:
-        if melody_tensor is not None:  # Use the new variable
-            output = MODEL.generate_with_chroma(
-                descriptions=[music_description],
-                melody_wavs=[melody_tensor],
-                melody_sample_rate=MODEL.sample_rate,
-                progress=True,
-                return_tokens=USE_DIFFUSION,
-            )
-        else:
-            output = MODEL.generate(
-                descriptions=[music_description],
-                progress=True,
-                return_tokens=USE_DIFFUSION,
-            )
-    except RuntimeError as e:
-        raise gr.Error("Error while generating: " + str(e))
+        description = mlmm_client.describe(task_type, media_path, text_prompt)
+    except MLLMClientError as exc:
+        if media_path:
+            # Clean up CUDA cache before raising error
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            raise gr.Error(str(exc))
+        description = app_config.compose_prompt("text", text_prompt)
 
-    if USE_DIFFUSION:
-        progress(progress=None, desc="Running MultiBandDiffusion...")
-        tokens = output[1]
-        if isinstance(MODEL.compression_model, InterleaveStereoCompressionModel):
-            left, right = MODEL.compression_model.get_left_right_codes(tokens)
-            tokens = torch.cat([left, right])
-        outputs_diffusion = MBD.tokens_to_wav(tokens)
-        if isinstance(MODEL.compression_model, InterleaveStereoCompressionModel):
-            assert outputs_diffusion.shape[1] == 1  # output is mono
-            outputs_diffusion = rearrange(
-                outputs_diffusion, "(s b) c t -> b (s c) t", s=2
-            )
-        output_audio = torch.cat([output[0], outputs_diffusion], dim=0)
-    else:
-        output_audio = output[0]
-
-    output_audio = output_audio.detach().cpu().float()
-
-    # 6. Save and Return (locally).
-    progress(progress=None, desc="Saving and returning...")
-    output_audio_paths = []
-
-    for i, audio in enumerate(output_audio):
-        with NamedTemporaryFile("wb", suffix=".wav", delete=False) as file:
-            audio_write(
-                file.name,
-                audio,
-                MODEL.sample_rate,
-                strategy="loudness",
-                loudness_headroom_db=16,
-                loudness_compressor=True,
-                add_suffix=False,
-            )
-            output_audio_paths.append(file.name)
-            file_cleaner.add(file.name)
-
-    if USE_DIFFUSION:
-        # Return both audios, but make sure to return the correct one first
-        result = (
-            output_audio_paths[0],  # Original
-            output_audio_paths[1],  # MBD
+    # 2. Generate music.
+    progress(progress=None, desc="Running MusicGen...")
+    audio_batch = None
+    
+    try:
+        audio_batch = music_generator.generate(
+            model_version=model_version,
+            description=description,
+            duration=float(duration),
+            top_k=int(topk),
+            top_p=float(topp),
+            temperature=float(temperature),
+            cfg_coef=float(cfg_coef),
+            melody=melody if melody else None,
+            use_diffusion=use_diffusion,
         )
-    else:
-        result = (
-            output_audio_paths[0],
-            None,
-        )  # Only original audio and description
+    except MusicGenerationError as exc:
+        # Clean up CUDA cache before raising error
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        raise gr.Error(str(exc))
+    except Exception as exc:
+        # Catch any unexpected errors and clean up
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        raise gr.Error(f"Unexpected error during music generation: {str(exc)}")
 
-    del melody_tensor, output, output_audio
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
+    # 3. Save results.
+    progress(progress=None, desc="Saving results...")
+    try:
+        audio_paths = _save_audio_batch(audio_batch)
+    except Exception as exc:
+        # Clean up audio batch and CUDA cache
+        if audio_batch is not None:
+            del audio_batch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        raise gr.Error(f"Failed to save audio: {str(exc)}")
+    finally:
+        # Always clean up audio batch after saving
+        if audio_batch is not None:
+            del audio_batch
 
-    return result
+    if use_diffusion and len(audio_paths) >= 2:
+        return audio_paths[0], audio_paths[1]
+    return audio_paths[0], None
 
 
 Wave = theme()
@@ -293,7 +192,6 @@ def create_ui(launch_kwargs=None):
         interrupt()
 
     with gr.Blocks(theme=Wave, css=css) as interface:
-
         gr.Markdown(
             """
             <div style="text-align: center;">
@@ -321,7 +219,7 @@ def create_ui(launch_kwargs=None):
                     )
                 with gr.Row():
                     media_type = gr.Radio(
-                        choices=["Image", "Video"],
+                        choices=["Image", "Video", "Text"],
                         value="Image",
                         label="",
                         interactive=True,
@@ -349,25 +247,12 @@ def create_ui(launch_kwargs=None):
                 )
                 with gr.Row():
                     submit_button = gr.Button("Generate Music", variant="primary")
-                    interrupt_button = gr.Button(
-                        "Interrupt", variant="stop"
-                    )  # Keep as gr.Button
+                    interrupt_button = gr.Button("Interrupt", variant="stop")
         with gr.Row():
             model_version = gr.Dropdown(
-                [
-                    "facebook/musicgen-melody",
-                    "facebook/musicgen-medium",
-                    "facebook/musicgen-small",
-                    "facebook/musicgen-large",
-                    "facebook/musicgen-melody-large",
-                    "facebook/musicgen-stereo-small",
-                    "facebook/musicgen-stereo-medium",
-                    "facebook/musicgen-stereo-melody",
-                    "facebook/musicgen-stereo-large",
-                    "facebook/musicgen-stereo-melody-large",
-                ],
+                app_config.available_music_models,
                 label="MusicGen Model",
-                value="facebook/musicgen-stereo-melody-large",
+                value=app_config.default_music_model,
             )
             duration = gr.Slider(
                 minimum=1, maximum=120, value=10, label="Duration (seconds)"
@@ -378,18 +263,16 @@ def create_ui(launch_kwargs=None):
             temperature = gr.Number(label="Temperature", value=1.0)
             cfg_coef = gr.Number(label="Classifier-Free Guidance", value=3.0)
             decoder = gr.Dropdown(
-                ["Default", "MultiBand_Diffusion"],
+                ["Default", app_config.diffusion_decoder_label],
                 label="Decoder",
                 value="Default",
                 interactive=True,
             )
 
-        # with gr.Row():
-        #     description_output = gr.Textbox(label="MLLM Generated Description")
         with gr.Row():
             output_audio = gr.Audio(label="Generated Music", type="filepath")
             output_audio_mbd = gr.Audio(
-                label="MultiBand Diffusion Decoder", type="filepath"
+                label=app_config.diffusion_decoder_label, type="filepath"
             )
 
         submit_button.click(
@@ -408,7 +291,6 @@ def create_ui(launch_kwargs=None):
                 cfg_coef,
                 decoder,
             ],
-            # outputs=[output_audio, description_output, output_audio_mbd],
             outputs=[output_audio, output_audio_mbd],
         )
         interrupt_button.click(interrupt_handler, [], [])
@@ -423,13 +305,13 @@ def create_ui(launch_kwargs=None):
                     None,
                     "Acoustic guitar solo. Country and folk music.",
                     None,
-                    "facebook/musicgen-stereo-melody-large",
+                    app_config.default_music_model,
                     10,
                     250,
                     0,
                     1.0,
                     3.0,
-                    "MultiBand_Diffusion",
+                    app_config.diffusion_decoder_label,
                 ],
                 [
                     "Video",
@@ -437,27 +319,27 @@ def create_ui(launch_kwargs=None):
                     "./assets/example_video_1.mp4",
                     "Space Rock, Synthwave, 80s. Electric guitar and Drums.",
                     None,
-                    "facebook/musicgen-stereo-melody-large",
+                    app_config.default_music_model,
                     10,
                     250,
                     0,
                     1.0,
                     3.0,
-                    "MultiBand_Diffusion",
+                    app_config.diffusion_decoder_label,
                 ],
                 [
-                    None,
+                    "Text",
                     None,
                     None,
                     "An 80s driving pop song with heavy drums and synth pads in the background",
                     "./assets/bach.mp3",
-                    "facebook/musicgen-stereo-melody-large",
+                    app_config.default_music_model,
                     10,
                     250,
                     0,
                     1.0,
                     3.0,
-                    "MultiBand_Diffusion",
+                    app_config.diffusion_decoder_label,
                 ],
             ],
             inputs=[
@@ -495,7 +377,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--server_port", type=int, default=0, help="Port to run the server on"
-    )  # Add server_port argument.
+    )
     parser.add_argument("--inbrowser", action="store_true", help="Open in browser")
     parser.add_argument("--share", action="store_true", help="Share the Gradio UI")
 
@@ -511,6 +393,9 @@ if __name__ == "__main__":
         launch_kwargs["inbrowser"] = args.inbrowser
     if args.share:
         launch_kwargs["share"] = args.share
+    # When listening on 0.0.0.0 and share is not explicitly set, enable share
+    elif args.listen == "0.0.0.0":
+        launch_kwargs["share"] = True
 
     logging.basicConfig(level=logging.INFO, stream=sys.stderr)
     create_ui(launch_kwargs)
