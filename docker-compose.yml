@@ -1,0 +1,30 @@
+services:
+  mllm:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: weavewave-mllm-server
+    ports:
+      - "8001:8001"
+    environment:
+      - WEAVEWAVE_MLLM_MODEL=google/gemma-3-12b-it
+      - WEAVEWAVE_MLLM_DEVICE=cuda
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: weavewave-demo --listen 0.0.0.0
+    ports:
+      - "7860:7860"
+    environment:
+      - WEAVEWAVE_MLLM_URL=http://mllm:8001
+    depends_on:
+      - mllm

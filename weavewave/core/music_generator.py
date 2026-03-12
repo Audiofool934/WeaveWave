@@ -1,16 +1,17 @@
+"""MusicGen wrapper with optional MultiBand Diffusion post-processing."""
+
+from __future__ import annotations
+
 from dataclasses import dataclass
-from typing import Optional, Tuple
 
 import numpy as np
 import torch
+from audiocraft.data.audio_utils import convert_audio
+from audiocraft.models import MultiBandDiffusion, MusicGen
+from audiocraft.models.encodec import InterleaveStereoCompressionModel
 from einops import rearrange
 
-from audiocraft.data.audio_utils import convert_audio
-from audiocraft.models import MusicGen, MultiBandDiffusion
-from audiocraft.models.encodec import InterleaveStereoCompressionModel
-
-
-MelodyInput = Tuple[int, np.ndarray]
+MelodyInput = tuple[int, np.ndarray]
 
 
 class MusicGenerationError(RuntimeError):
@@ -19,16 +20,20 @@ class MusicGenerationError(RuntimeError):
 
 @dataclass
 class MusicGenerator:
-    """Wrapper around MusicGen + optional MultiBand Diffusion decoding."""
+    """Wrapper around MusicGen + optional MultiBand Diffusion decoding.
 
-    device: Optional[str] = None
+    Args:
+        device: Torch device string.  Auto-detected when *None*.
+    """
+
+    device: str | None = None
 
     def __post_init__(self) -> None:
         if self.device is None:
             self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        self._model: Optional[MusicGen] = None
-        self._model_version: Optional[str] = None
-        self._diffusion: Optional[MultiBandDiffusion] = None
+        self._model: MusicGen | None = None
+        self._model_version: str | None = None
+        self._diffusion: MultiBandDiffusion | None = None
 
     def generate(
         self,
@@ -40,9 +45,25 @@ class MusicGenerator:
         top_p: float,
         temperature: float,
         cfg_coef: float,
-        melody: Optional[MelodyInput],
+        melody: MelodyInput | None,
         use_diffusion: bool,
     ) -> torch.Tensor:
+        """Generate an audio tensor from a text description.
+
+        Args:
+            model_version: HuggingFace model identifier for MusicGen.
+            description: Text description to condition generation.
+            duration: Desired audio length in seconds.
+            top_k: Top-k sampling parameter.
+            top_p: Nucleus sampling probability.
+            temperature: Sampling temperature.
+            cfg_coef: Classifier-free guidance coefficient.
+            melody: Optional ``(sample_rate, ndarray)`` tuple for chroma conditioning.
+            use_diffusion: Whether to apply MultiBand Diffusion post-processing.
+
+        Returns:
+            Audio tensor of shape ``(batch, channels, samples)``.
+        """
         model = self._load_model(model_version)
         model.set_generation_params(
             duration=duration,
@@ -86,6 +107,7 @@ class MusicGenerator:
 
     @property
     def sample_rate(self) -> int:
+        """Return the sample rate of the currently loaded model."""
         if self._model is None:
             raise MusicGenerationError("MusicGen model is not loaded.")
         return self._model.sample_rate
@@ -134,7 +156,7 @@ class MusicGenerator:
     def _post_process_output(
         self,
         model: MusicGen,
-        output,
+        output: object,
         use_diffusion: bool,
     ) -> torch.Tensor:
         if not use_diffusion:
@@ -149,9 +171,7 @@ class MusicGenerator:
 
         diffusion_audio = diffusion.tokens_to_wav(tokens)
         if isinstance(model.compression_model, InterleaveStereoCompressionModel):
-            diffusion_audio = rearrange(
-                diffusion_audio, "(s b) c t -> b (s c) t", s=2
-            )
+            diffusion_audio = rearrange(diffusion_audio, "(s b) c t -> b (s c) t", s=2)
 
         return torch.cat([audio_batch, diffusion_audio], dim=0)
 

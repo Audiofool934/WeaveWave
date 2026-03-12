@@ -1,12 +1,12 @@
 # @package __global__
 
-# MusicGen模型配置
+# MusicGen model architecture configuration
 model:
-  # 语言模型配置
+  # Language model (transformer decoder)
   lm:
     model_type: transformer
-    model_scale: small  # 可选: small, medium, large
-    # dim对应于不同的规模
+    model_scale: small  # options: small, medium, large
+    # Dimension settings per scale
     small:
       dim: 768
       heads: 12
@@ -19,34 +19,33 @@ model:
       dim: 1536
       heads: 24
       layers: 48
-    # 注意力机制的缩放
+    # Attention
     attn_head_dim: 64
     attn_temp: 1.0
-    # 模型输入/输出配置
-    max_duration: 30  # 最大生成时长（秒）
-    n_q: 8  # 编解码器中的量化器数量
-    context_len: 1024  # 上下文长度
-    # 词汇表大小等于编解码器中的码本大小
-    vocab_size: 2048  # EnCodec使用2048个码本大小
+    # I/O configuration
+    max_duration: 30  # maximum generation duration (seconds)
+    n_q: 8  # number of quantizers (codebooks) in EnCodec
+    context_len: 1024
+    vocab_size: 2048  # EnCodec codebook size
 
-# 条件配置，使用style2music对文本和风格进行条件处理
-# 此配置参考audiocraft/config/conditioner/style2music.yaml
+# Conditioning (style + text)
+# References audiocraft/config/conditioner/style2music.yaml
 conditioner:
-  # 分类器自由引导
+  # Classifier-free guidance
   classifier_free_guidance:
     training_dropout: 0.1
     inference_coef: 3.0
-  
-  # 属性dropout
+
+  # Attribute dropout
   attribute_dropout:
     args:
       active_on_eval: false
-    text: 
+    text:
       description: 0.4
     wav:
       self_wav: 0.4
-  
-  # 融合器
+
+  # Fuser
   fuser:
     cross_attention_pos_emb: false
     cross_attention_pos_emb_scale: 1
@@ -54,10 +53,10 @@ conditioner:
     prepend: [self_wav, description]
     cross: []
     input_interpolate: []
-    
-  # 条件器
+
+  # Conditioners
   conditioners:
-    # 音频风格条件器
+    # Audio style conditioner (MERT-based)
     self_wav:
       model: style
       style:
@@ -67,7 +66,7 @@ conditioner:
         encodec_checkpoint: '//pretrained/facebook/encodec_32khz'
         encodec_n_q: 3
         length: 3.0
-        ds_factor: 15  # MERT是75Hz，75/15=5Hz表示
+        ds_factor: 15  # MERT runs at 75Hz; 75/15 = 5Hz representation
         n_q_out: 6
         eval_q: 3
         q_dropout: true
@@ -79,12 +78,12 @@ conditioner:
         ds_rate_compression: 640
         use_middle_of_segment: false
         rvq_threshold_ema_dead_code: 0.1
-    
-    # 文本描述条件器
+
+    # Text description conditioner (T5-base, frozen)
     description:
       model: t5
       t5:
         name: t5-base
         finetune: false
         word_dropout: 0.2
-        normalize_text: false 
+        normalize_text: false

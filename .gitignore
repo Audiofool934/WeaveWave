@@ -1,13 +1,43 @@
+# Git submodules & course materials
 /repos/
 /course/
 /eval/
+
+# Assets (keep structure, ignore large files)
 assets/lib/*
 assets/notes/*
+
+# Data & results
 data/*/*
 results/*
-demo/app/run.sh
-__pycache__/
-.DS_Store
-.ipynb_checkpoints/
+outputs/
+
+# Model weights
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.bin
 models/t2m/diffrhythm/
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+build/
+
+# Environment
+.env
+.env.*
+
+# IDE & OS
 .vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+.ipynb_checkpoints/
+
+# Misc
+demo/app/run.sh

@@ -1,0 +1,114 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "weavewave"
+version = "0.1.0"
+description = "Multimodal music generation via text-bridging with MLLMs and MusicGen"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.9"
+authors = [
+    {name = "Audiofool"},
+]
+keywords = [
+    "music-generation",
+    "multimodal",
+    "deep-learning",
+    "audiocraft",
+    "musicgen",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Multimedia :: Sound/Audio",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "torch>=2.3.1",
+    "torchaudio>=2.3.1",
+    "torchvision>=0.18.1",
+    "transformers>=4.50.0,<5.0.0",
+    "pytorch-lightning>=1.9.5",
+    "hydra-core>=1.3.2",
+    "dora-search>=0.1.12",
+    "flashy @ git+https://github.com/facebookresearch/flashy.git",
+    "sentencepiece>=0.1.99",
+    "tqdm>=4.65.0",
+    "librosa>=0.10.0",
+    "einops>=0.6.1",
+    "omegaconf>=2.3.0",
+    "pyyaml>=6.0",
+    "matplotlib>=3.7.2",
+    "tensorboard>=2.14.0",
+    "pandas>=2.1.0",
+    "numpy>=1.24.3,<2.0",
+    "pillow>=10.0.0",
+    "scikit-learn>=1.3.0",
+    "av>=10.0.0",
+    "soundfile>=0.12.1",
+    "pathspec>=0.11.2",
+    "xformers>=0.0.22.post7",
+    "requests>=2.31.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "ruff>=0.4.0",
+    "mypy>=1.8",
+]
+demo = [
+    "gradio>=3.50.2",
+    "fastapi>=0.103.0",
+    "uvicorn[standard]>=0.23.0",
+    "decord>=0.6.0",
+]
+
+[project.scripts]
+weavewave-train = "weavewave.training.train:main"
+weavewave-run-training = "weavewave.training.runner:main"
+weavewave-evaluate = "weavewave.evaluation.evaluate:main"
+weavewave-prepare-data = "weavewave.data.prepare_dataset:main"
+weavewave-demo = "weavewave.serving.app:main"
+weavewave-mllm-server = "weavewave.serving.mllm_server:main"
+
+[project.urls]
+Repository = "https://github.com/audiofool/WeaveWave"
+
+[tool.setuptools.packages.find]
+include = ["weavewave*"]
+
+[tool.ruff]
+target-version = "py39"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["weavewave"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "gpu: marks tests that require a CUDA GPU (deselect with '-m \"not gpu\"')",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
