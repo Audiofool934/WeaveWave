@@ -1,5 +1,7 @@
 """Centralized logging configuration for WeaveWave."""
 
+from __future__ import annotations
+
 import logging
 import sys
 

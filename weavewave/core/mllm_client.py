@@ -51,7 +51,7 @@ class MLLMClient:
         """
         task = self.config.task_from_media_type(media_type or "")
         endpoint = self.config.endpoint_for_task(task)
-        prompt = self.config.compose_prompt(media_type, user_prompt)
+        prompt = self.config.compose_prompt(media_type or "", user_prompt)
 
         payload: dict[str, str] = {"user_prompt": prompt}
         if task in {"image", "video"}:
@@ -77,7 +77,7 @@ class MLLMClient:
         description = data.get("description")
         if not description:
             raise MLLMClientError("MLLM response did not include a description.")
-        return description.strip()
+        return str(description).strip()
 
     @staticmethod
     def _encode_media(media_path: str) -> str:

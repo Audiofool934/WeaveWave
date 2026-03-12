@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import typing as tp
 from dataclasses import dataclass
 
 import numpy as np
@@ -110,7 +111,7 @@ class MusicGenerator:
         """Return the sample rate of the currently loaded model."""
         if self._model is None:
             raise MusicGenerationError("MusicGen model is not loaded.")
-        return self._model.sample_rate
+        return int(self._model.sample_rate)
 
     def _load_model(self, model_version: str) -> MusicGen:
         if self._model is not None and self._model_version == model_version:
@@ -144,23 +145,24 @@ class MusicGenerator:
         melody_tensor = melody_tensor[..., :max_length]
 
         try:
-            return convert_audio(
+            result: torch.Tensor = convert_audio(
                 melody_tensor,
                 sample_rate,
                 model.sample_rate,
                 model.audio_channels,
             )
+            return result
         except RuntimeError as exc:
             raise MusicGenerationError(f"Melody preprocessing failed: {exc}") from exc
 
     def _post_process_output(
         self,
         model: MusicGen,
-        output: object,
+        output: tp.Any,
         use_diffusion: bool,
     ) -> torch.Tensor:
         if not use_diffusion:
-            return output[0]
+            return output[0]  # type: ignore[no-any-return]
 
         diffusion = self._load_diffusion()
         audio_batch, tokens = output
@@ -173,7 +175,7 @@ class MusicGenerator:
         if isinstance(model.compression_model, InterleaveStereoCompressionModel):
             diffusion_audio = rearrange(diffusion_audio, "(s b) c t -> b (s c) t", s=2)
 
-        return torch.cat([audio_batch, diffusion_audio], dim=0)
+        return torch.cat([audio_batch, diffusion_audio], dim=0)  # type: ignore[no-any-return]
 
     def _load_diffusion(self) -> MultiBandDiffusion:
         if self._diffusion is None:

@@ -174,6 +174,8 @@ class MLLMService:
         Returns:
             Generated description string.
         """
+        assert self.model is not None and self.processor is not None, "Model not loaded"
+
         system_prompt = SYSTEM_PROMPTS[modality]
 
         user_content: list[dict] = []
@@ -205,7 +207,7 @@ class MLLMService:
                 )
                 generation = generation[0][input_len:]
 
-            answer = self.processor.decode(generation, skip_special_tokens=True)
+            answer: str = self.processor.decode(generation, skip_special_tokens=True)
 
         logger.info("Generated description: %s", answer.strip())
         return answer.strip()
